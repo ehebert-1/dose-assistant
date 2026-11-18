@@ -1,0 +1,1268 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dose Assistant</title>
+<style>
+  :root{
+    --bg:#ffffff; --fg:#14181d; --muted:#5a646f; --line:#dbe0e6;
+    --card:#f4f6f8; --accent:#1f5fa8; --accent-fg:#ffffff;
+    --ok:#0c6b2e; --ok-bg:#e3f4e9;
+    --warn:#8a4b00; --warn-bg:#fdf0dd;
+    --stop:#a31515; --stop-bg:#fbe6e6;
+    --mic:#c0392b;
+    --font-ui: system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#11151a; --fg:#eef2f6; --muted:#98a3ae; --line:#2a323b;
+      --card:#1a2026; --accent:#5aa0e8; --accent-fg:#0b1016;
+      --ok:#6fdc96; --ok-bg:#14301e;
+      --warn:#f0b35e; --warn-bg:#342411;
+      --stop:#ff8b85; --stop-bg:#391a1a;
+      --mic:#ff6b5e;
+      color-scheme:dark;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#11151a; --fg:#eef2f6; --muted:#98a3ae; --line:#2a323b;
+    --card:#1a2026; --accent:#5aa0e8; --accent-fg:#0b1016;
+    --ok:#6fdc96; --ok-bg:#14301e;
+    --warn:#f0b35e; --warn-bg:#342411;
+    --stop:#ff8b85; --stop-bg:#391a1a;
+    --mic:#ff6b5e;
+    color-scheme:dark;
+  }
+
+  *{box-sizing:border-box}
+  body{
+    margin:0;background:var(--bg);color:var(--fg);
+    font:17px/1.5 var(--font-ui);
+    padding:20px 16px 40px;
+  }
+  .wrap{max-width:560px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+
+  h1{font-size:1.3rem;margin:0}
+  .sub{color:var(--muted);font-size:.88rem;margin:0}
+
+  .panel{background:var(--card);border:1px solid var(--line);
+         border-radius:16px;padding:20px}
+
+  /* remaining-insulin banner */
+  .remain{display:flex;align-items:baseline;gap:10px}
+  .remain .big{font-size:2.4rem;font-weight:800;font-variant-numeric:tabular-nums;
+                line-height:1}
+  .remain .unit{color:var(--muted);font-size:.95rem}
+  .bar{height:10px;background:var(--line);border-radius:99px;margin-top:12px;overflow:hidden}
+  .bar>i{display:block;height:100%;background:var(--ok);border-radius:99px;
+         transition:width .3s}
+  .bar.low>i{background:var(--warn)}
+  .bar.empty>i{background:var(--stop)}
+
+  /* current spoken line */
+  #saying{font-size:1.4rem;line-height:1.35;font-weight:600;margin:0;min-height:3.2rem}
+  #hint{color:var(--muted);font-size:.95rem;margin:.5rem 0 0;min-height:1.4rem}
+
+  .state{display:flex;align-items:center;gap:10px;margin-top:14px;
+         font-size:.9rem;font-weight:600;color:var(--muted)}
+  .dot{width:12px;height:12px;border-radius:99px;background:var(--line);flex:none}
+  .dot.listening{background:var(--mic);animation:pulse 1.1s ease-in-out infinite}
+  .dot.speaking{background:var(--accent)}
+  @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(1.35)}}
+  @media (prefers-reduced-motion:reduce){.dot.listening{animation:none}}
+
+  button{
+    font:inherit;font-weight:650;padding:16px;border-radius:14px;
+    border:1px solid transparent;background:var(--accent);color:var(--accent-fg);
+    cursor:pointer;width:100%;min-height:58px;
+  }
+  button.secondary{background:transparent;color:var(--fg);border-color:var(--line)}
+  button:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+  button[disabled]{opacity:.45;cursor:default}
+  .menu{display:grid;gap:10px}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+
+  .status{padding:14px;border-radius:12px;font-weight:700;margin-top:4px}
+  .status.ok{background:var(--ok-bg);color:var(--ok)}
+  .status.warn{background:var(--warn-bg);color:var(--warn)}
+  .status.stop{background:var(--stop-bg);color:var(--stop)}
+
+  label{display:block;font-weight:600;margin:0 0 .4rem;font-size:.95rem}
+  input[type=range]{width:100%;height:40px}
+  select{font:inherit;width:100%;padding:14px;border-radius:12px;
+         border:1px solid var(--line);background:var(--bg);color:var(--fg);
+         min-height:52px}
+  select:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+  .readout{font-size:2rem;font-weight:800;margin:.2rem 0;font-variant-numeric:tabular-nums}
+
+  .vals{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:4px}
+  .val{background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:12px}
+  .val .k{color:var(--muted);font-size:.8rem;font-weight:600}
+  .val .v{font-size:1.5rem;font-weight:800;font-variant-numeric:tabular-nums}
+
+  .log{font-size:.9rem;color:var(--muted);white-space:pre-wrap;
+       max-height:10rem;overflow-y:auto;line-height:1.55}
+  .log b{color:var(--fg);font-weight:600}
+  .foot{color:var(--muted);font-size:.8rem;text-align:center;margin:0}
+  [hidden]{display:none!important}
+  .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+</style>
+
+<div class="wrap">
+
+  <div>
+    <h1>Dose Assistant</h1>
+    <p class="sub">Insulin verification prototype &middot; not for clinical use</p>
+  </div>
+
+  <div id="live" aria-live="assertive" class="sr"></div>
+
+  <!-- ===== remaining insulin ===== -->
+  <div class="panel">
+    <div class="remain">
+      <span class="big" id="remainVal">--</span>
+      <span class="unit">units remaining</span>
+    </div>
+    <div class="bar" id="remainBar"><i style="width:0%"></i></div>
+    <div id="remainWarn" class="status warn" hidden></div>
+  </div>
+
+  <!-- ===== what the app is saying ===== -->
+  <div class="panel">
+    <p id="saying">Press Start.</p>
+    <p id="hint"></p>
+    <div class="state"><span class="dot" id="dot"></span><span id="stateTxt">Idle</span></div>
+  </div>
+
+  <!-- ===== menu ===== -->
+  <div class="menu" id="menu">
+    <button id="startBtn">Start</button>
+    <button id="doseBtn" class="secondary" disabled>Dose</button>
+    <div class="row2">
+      <button id="replaceBtn" class="secondary" disabled>Replace cartridge</button>
+      <button id="settingsBtn" class="secondary" disabled>Settings</button>
+    </div>
+    <button id="cancelBtn" class="secondary" hidden>Cancel this step</button>
+    <button id="stopBtn" class="secondary" hidden>Stop</button>
+  </div>
+
+  <!-- ===== values heard this dose ===== -->
+  <div class="panel" id="valsPanel" hidden>
+    <div class="vals">
+      <div class="val"><div class="k">BLOOD SUGAR</div><div class="v" id="vBg">--</div></div>
+      <div class="val"><div class="k">CARBS</div><div class="v" id="vCarbs">--</div></div>
+    </div>
+    <div id="doseBox" class="status ok" hidden></div>
+  </div>
+
+  <!-- ===== dial ===== -->
+  <div class="panel" id="dialPanel" hidden>
+    <label for="dial">Dose dial &mdash; simulated sensor</label>
+    <input id="dial" type="range" min="0" max="30" step="1" value="0">
+    <p class="readout"><span id="dialVal">0.0</span> units</p>
+    <div id="dialStatus" class="status warn">Waiting&hellip;</div>
+    <label style="margin-top:14px;font-weight:500">
+      <input type="checkbox" id="faultSim"> Simulate sensor fault
+    </label>
+  </div>
+
+  <!-- ===== voice ===== -->
+  <div class="panel">
+    <label for="voiceSel">Voice</label>
+    <select id="voiceSel"></select>
+    <div class="row2" style="margin-top:10px">
+      <button id="testVoice" class="secondary">Test voice</button>
+      <button id="rateBtn" class="secondary">Pace: normal</button>
+    </div>
+  </div>
+
+  <!-- ===== transcript ===== -->
+  <div class="panel">
+    <label style="font-weight:500;margin-bottom:10px">
+      <input type="checkbox" id="dbgChk"> Show diagnostics
+    </label>
+    <div class="log" id="log"></div>
+  </div>
+
+  <p class="foot" id="foot"></p>
+</div>
+
+<script>
+(() => {
+"use strict";
+
+// ====================================================================
+//  Dose Assistant
+//
+//  Voice drives the whole flow. The on-screen menu and readouts stay
+//  visible and clickable, because ISO 11608-7 asks for information in
+//  both a visual and a non-visual form, not one instead of the other.
+//  A sighted caregiver, or a user with partial vision, gets the screen;
+//  the speech path is complete on its own.
+//
+//  Ethan Hebert | Carilion Giles: Insulin Dosing
+// ====================================================================
+
+const $ = id => document.getElementById(id);
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+let running  = false;
+let abortFlag = false;
+let busy     = false;          // a flow is in progress
+
+// Cancel aborts the step in progress and returns to the menu. Stop ends
+// the whole session. Saying "cancel" or "stop" at any spoken prompt does
+// the same thing as the button, so the mechanic works without sight.
+let cancelFlag   = false;
+let activeFinish = null;       // finish() of the listening window now open
+
+function cancelFlow(){
+  if(!busy) return;
+  cancelFlag = true;
+  try{ speechSynthesis.cancel(); }catch{}
+  if(activeFinish) activeFinish(null, 'cancelled');
+}
+
+// ---------- settings and state ----------
+// The dial stops at 30 units. Nothing may ask for more than the pen
+// can physically be turned to.
+const PEN_MAX = 30;
+
+const KEY = 'penSettingsV3';
+let cfg = { mode:'calculate', prescribed:10,
+            icRatio:10, isf:50, targetBG:120, capacity:100, lowWarnPct:20 };
+let state = { remaining:100, configured:false };
+
+function save(){
+  try{ localStorage.setItem(KEY, JSON.stringify({cfg,state})); }catch{}
+}
+function load(){
+  try{
+    const r = JSON.parse(localStorage.getItem(KEY) || 'null');
+    if(r && r.cfg && r.state){ cfg = r.cfg; state = r.state; }
+  }catch{}
+}
+
+// ====================================================================
+//  MICROPHONE
+//
+//  The permission prompt reappeared on every question because a new
+//  SpeechRecognition object was built each time, and each one is a
+//  fresh request for the microphone.
+//
+//  Two fixes. One recognizer for the whole session, reused. And a
+//  MediaStream held open from the Start press until the session ends,
+//  so the microphone is genuinely in use and later recognitions fall
+//  under the same grant instead of asking again.
+//
+//  Both only hold on a secure origin. Served from localhost or https
+//  the grant persists; in a sandboxed frame it cannot.
+// ====================================================================
+
+let rec        = null;
+let recBusy    = false;   // a recognition session is currently active
+let recReady   = false;   // permission obtained
+let waiter     = null;    // resolve() of the hear() currently waiting
+let wantListen = false;   // a question is pending
+let deadline   = 0;       // when this question gives up
+
+// What the app said last, and when it stopped saying it. Used to throw
+// away the app's own voice if the recognizer transcribes it.
+let lastSpoken   = '';
+let speechEndedAt = 0;
+
+const norm = s => (s || '').toLowerCase().replace(/[^a-z0-9 ]/g,'')
+                           .replace(/\s+/g,' ').trim();
+
+// The microphone can still be open as a sentence finishes, and Chrome
+// finalizes a transcript up to a second after the audio. So a result that
+// arrives right after the app spoke, and reads like what the app just
+// said, is the app hearing itself. Only applied inside a short window, so
+// a user who answers a confirmation by repeating the number is not
+// mistaken for an echo.
+// Substring matching was too strict: the recognizer mis-transcribes the
+// app's own voice, so the text never matched exactly and the garbage was
+// treated as an answer. Word overlap survives mis-transcription.
+function isEcho(t){
+  if(Date.now() - speechEndedAt > 2000) return false;
+  const a = norm(t).split(' ').filter(Boolean);
+  const b = new Set(norm(lastSpoken).split(' ').filter(Boolean));
+  if(!a.length) return true;
+  if(a.length < 2) return false;            // one-word answers are never echoes
+  const hits = a.filter(w => b.has(w)).length;
+  return hits / a.length >= 0.6;
+}
+
+function initRec(){
+  if(rec) return;
+  rec = new SR();
+  rec.lang            = 'en-US';
+  rec.continuous      = false;
+  rec.interimResults  = false;
+  rec.maxAlternatives = 4;
+
+  rec.onresult = e => {
+    const alts = [...e.results[0]]
+                   .map(a => a.transcript.trim().toLowerCase())
+                   .filter(Boolean);
+    if(!alts.length) return;
+
+    if(isEcho(alts[0])){
+      dbg('echo ignored: "' + alts[0] + '"');
+      return;                     // keep listening; do not answer
+    }
+
+    log('You', alts[0]);
+    deliver(alts);
+  };
+
+  rec.onerror = e => {
+    dbg('error: ' + e.error);
+    if(e.error === 'not-allowed' || e.error === 'service-not-allowed'){
+      recReady = false;
+      deliver(null);
+    }
+    // 'no-speech', 'aborted' and 'network' are routine here; onend decides
+  };
+
+  rec.onend = () => {
+    recBusy = false;
+    dbg('session ended');
+
+    // Chrome ends a session on its own after a few seconds of silence.
+    // That is Chrome's timeout, not ours. Keep restarting until OUR
+    // deadline; the deadline timer alone decides when to give up.
+    if(wantListen && Date.now() < deadline - 600) setTimeout(startRec, 150);
+  };
+}
+
+function startRec(){
+  if(recBusy || !wantListen) return;
+  try{ rec.start(); recBusy = true; dbg('listening'); }
+  catch{
+    // start() throws if the previous session has not finished closing.
+    recBusy = false;
+    setTimeout(() => { if(wantListen && !recBusy){
+      try{ rec.start(); recBusy = true; dbg('listening (retry)'); }catch{}
+    }}, 300);
+  }
+}
+
+// The waiter is NOT cleared here. A transcript that does not parse must
+// not end the question: the microphone stays open and the next thing
+// said gets its turn. Only the deadline closes the window.
+function deliver(v){
+  if(waiter) waiter(v);
+}
+
+// Called once, on the Start press.
+//
+// getUserMedia is what produces the permission prompt Chrome *stores*
+// against the origin. The stream is released immediately afterwards:
+// holding the device open is unnecessary once the grant exists, and it
+// can keep the speech recognizer from opening the microphone at all.
+async function openMic(){
+  try{
+    const s = await navigator.mediaDevices.getUserMedia({ audio:true });
+    s.getTracks().forEach(t => t.stop());
+  }catch{ recReady = false; return false; }
+
+  initRec();
+  recReady = true;
+  return true;
+}
+
+function closeMic(){
+  wantListen = false;
+  deliver(null);
+  try{ if(rec) rec.abort(); }catch{}
+  recBusy = false;
+}
+
+// ====================================================================
+//  SPEAK AND HEAR
+// ====================================================================
+
+function setState(cls, txt){
+  $('dot').className = 'dot' + (cls ? ' ' + cls : '');
+  $('stateTxt').textContent = txt;
+}
+
+function log(who, what){
+  const b = document.createElement('div');
+  b.innerHTML = '<b>' + who + '</b> ' + what;
+  $('log').prepend(b);
+}
+
+// Timestamped trace of the microphone's actual behaviour. Off by default.
+// With it on, the transcript shows when a window opens and closes, when
+// Chrome ends a session on its own, and what was heard but not used -
+// which is the difference between the user being slow and the recognizer
+// misbehaving.
+const tPage = Date.now();
+function dbg(m){
+  const c = document.getElementById('dbgChk');
+  if(!c || !c.checked) return;
+  const b = document.createElement('div');
+  b.style.opacity = '.7';
+  b.textContent = '[' + ((Date.now() - tPage) / 1000).toFixed(1) + 's] ' + m;
+  $('log').prepend(b);
+}
+
+// ====================================================================
+//  VOICE SELECTION
+//
+//  Windows ships two generations of voices. The old SAPI5 ones (David,
+//  Zira, Hazel) are the flat robotic default. The newer neural ones
+//  (Aria, Jenny, Guy, and the "Natural" set) sound close to recorded
+//  speech. Chrome also exposes Google's network voices.
+//
+//  Which of these a browser offers is not knowable in advance, so the
+//  list is read at runtime, ranked, and the best one picked. For a device
+//  whose whole output is speech this is not cosmetic: a voice that is
+//  tiring to listen to is a voice people stop listening to.
+// ====================================================================
+
+let voices = [], chosenVoice = null, baseRate = 1.0;
+const VKEY = 'penVoiceV1';
+
+function rankVoice(v){
+  const n = v.name.toLowerCase();
+  let s = 0;
+  if(/natural/.test(n))                          s += 100;  // Edge neural
+  if(/google/.test(n))                           s += 60;   // Chrome network
+  if(/online/.test(n))                           s += 40;
+  if(/aria|jenny|emma|ava|michelle|guy|andrew|brian|eric/.test(n)) s += 30;
+  if(/zira|david|mark|hazel|sapi/.test(n))       s -= 40;   // old SAPI5
+  if(/^en-us$/i.test(v.lang))                    s += 20;
+  else if(/^en-gb$/i.test(v.lang))               s += 12;
+  else if(/^en/i.test(v.lang))                   s += 6;
+  if(v.localService)                             s -= 5;
+  return s;
+}
+
+function loadVoices(){
+  if(!('speechSynthesis' in window)) return;
+
+  const all = speechSynthesis.getVoices().filter(v => /^en/i.test(v.lang));
+  if(!all.length) return;                 // list arrives late; onvoiceschanged retries
+
+  voices = all.sort((a,b) => rankVoice(b) - rankVoice(a));
+
+  const sel = $('voiceSel');
+  sel.innerHTML = '';
+  voices.forEach(v => {
+    const o = document.createElement('option');
+    o.value = v.name;
+    o.textContent = v.name.replace(/^Microsoft /,'')
+                          .replace(/\s*-\s*English.*$/i,'')
+                          + '  (' + v.lang + ')';
+    sel.appendChild(o);
+  });
+
+  let saved = null;
+  try{ saved = localStorage.getItem(VKEY); }catch{}
+  chosenVoice = voices.find(v => v.name === saved) || voices[0];
+  sel.value = chosenVoice.name;
+}
+
+if('speechSynthesis' in window){
+  speechSynthesis.onvoiceschanged = loadVoices;
+  loadVoices();
+}
+
+// Waits until the utterance finishes. Opening the microphone while the
+// device is still talking makes the recognizer hear the app's own voice.
+function speak(text, hint, rate = 1.0){
+  $('saying').textContent = text;
+  if(hint !== undefined) $('hint').textContent = hint || '';
+  $('live').textContent = text;
+  log('App', text);
+
+  return new Promise(resolve => {
+    if(!('speechSynthesis' in window)) return resolve();
+    try{
+      speechSynthesis.cancel();
+      const eff = rate * baseRate;
+      const u = new SpeechSynthesisUtterance(text);
+      if(chosenVoice){ u.voice = chosenVoice; u.lang = chosenVoice.lang; }
+      u.rate  = eff;
+      u.pitch = 1.0;
+      lastSpoken = text;
+      u.onend = u.onerror = () => {
+        speechEndedAt = Date.now();
+        setState('', 'Thinking');
+        resolve();
+      };
+      setState('speaking', 'Speaking');
+      speechSynthesis.speak(u);
+
+      // Guard against a lost onend event. Deliberately generous: if this
+      // fires while the voice is still going, the microphone opens early
+      // and the recognizer hears the app instead of the user.
+      setTimeout(() => {
+        speechEndedAt = Date.now();
+        resolve();
+      }, 1500 + text.length * 110 / eff);
+    }catch{ resolve(); }
+  });
+}
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// ====================================================================
+//  ONE LISTENING WINDOW PER QUESTION
+//
+//  The previous version ended the question on the first transcript,
+//  whatever it contained. So anything unusable - the app's own voice, a
+//  cough, a half-word - counted as a failed attempt, and three of those
+//  pass in about a second. That is the stutter: the prompt repeating
+//  before the user had said anything.
+//
+//  Now the microphone stays open for the whole window and every
+//  transcript is offered to the parser. Unusable ones are logged and
+//  ignored while listening continues. Only the deadline closes the
+//  window, so the prompt cannot repeat more than once per window.
+// ====================================================================
+
+const LISTEN_MS = 12000;
+
+// parse(alts) returns a value to accept, or null to keep listening.
+// Resolves to { v, reason } where reason is 'ok', 'timeout' or 'nomic'.
+function hearUntil(parse, timeoutMs = LISTEN_MS){
+  if(!SR || !recReady) return Promise.resolve({ v:null, reason:'nomic' });
+  initRec();
+
+  return new Promise(resolve => {
+    let settled = false;
+
+    const finish = (v, reason) => {
+      if(settled) return;
+      settled = true;
+      clearTimeout(timer);
+      wantListen = false;
+      waiter = null;
+      try{ rec.abort(); }catch{}
+      recBusy = false;
+      activeFinish = null;
+      setState('', 'Thinking');
+      dbg('window closed (' + reason + ')');
+      resolve({ v, reason });
+    };
+
+    const timer = setTimeout(() => finish(null, 'timeout'), timeoutMs);
+    activeFinish = finish;          // lets the Cancel button close this window
+
+    deadline   = Date.now() + timeoutMs;
+    wantListen = true;
+    setState('listening', 'Listening');
+    dbg('window open for ' + (timeoutMs/1000) + 's');
+
+    waiter = alts => {
+      if(!alts) return;                       // session hiccup; onend restarts
+      const v = parse(alts);
+      if(v === null || v === undefined){
+        dbg('could not use: "' + alts[0] + '" - still listening');
+        return;
+      }
+      finish(v, 'ok');
+    };
+
+    // A beat before opening the microphone, so the tail of the app's own
+    // sentence is not captured as the answer.
+    setTimeout(() => { if(!settled) startRec(); }, 400);
+  });
+}
+
+// ====================================================================
+//  PARSERS
+// ====================================================================
+
+const UNIT = {zero:0,oh:0,o:0,one:1,two:2,to:2,too:2,three:3,four:4,for:4,
+              five:5,six:6,seven:7,eight:8,ate:8,nine:9};
+const TEEN = {ten:10,eleven:11,twelve:12,thirteen:13,fourteen:14,fifteen:15,
+              sixteen:16,seventeen:17,eighteen:18,nineteen:19};
+const TENS = {twenty:20,thirty:30,forty:40,fourty:40,fifty:50,sixty:60,
+              seventy:70,eighty:80,ninety:90};
+
+function wordsToNumber(toks){
+  if(!toks.length) return null;
+
+  // "hundred" or "thousand" present: read it as arithmetic.
+  // "one hundred forty five" is 100 + 40 + 5.
+  if(toks.includes('hundred') || toks.includes('thousand')){
+    let total = 0, cur = 0, any = false;
+    for(const t of toks){
+      if(t === 'hundred'){ cur = (cur || 1) * 100; any = true; continue; }
+      if(t === 'thousand'){ total += (cur || 1) * 1000; cur = 0; any = true; continue; }
+      const n = UNIT[t] ?? TEEN[t] ?? TENS[t];
+      if(n === undefined) continue;
+      cur += n; any = true;
+    }
+    return any ? total + cur : null;
+  }
+
+  // Otherwise the number was spoken as a string of pieces: "one four
+  // five", "one forty five", "ninety eight". Combine a tens word with a
+  // following unit, then concatenate the pieces as digits.
+  const chunks = [];
+  for(let i = 0; i < toks.length; i++){
+    const t = toks[i];
+    if(TENS[t] !== undefined){
+      const nx = toks[i+1];
+      if(nx && UNIT[nx] !== undefined && UNIT[nx] !== 0){ chunks.push(TENS[t] + UNIT[nx]); i++; }
+      else chunks.push(TENS[t]);
+    }
+    else if(TEEN[t] !== undefined) chunks.push(TEEN[t]);
+    else if(UNIT[t]  !== undefined) chunks.push(UNIT[t]);
+  }
+  if(!chunks.length) return null;
+  const v = parseInt(chunks.join(''), 10);
+  return isNaN(v) ? null : v;
+}
+
+function parseNumber(alts){
+  for(const raw of alts){
+    const t = raw.toLowerCase().replace(/[^a-z0-9.\s-]/g,' ')
+                 .replace(/-/g,' ').replace(/\s+/g,' ').trim();
+
+    // digits as recognized, including decimals
+    const d = t.match(/\d+(?:\.\d+)?/);
+    if(d) return parseFloat(d[0]);
+
+    const toks = t.split(' ').filter(x => x && x !== 'and');
+    const p = toks.indexOf('point');
+
+    if(p >= 0){
+      const whole = wordsToNumber(toks.slice(0, p));
+      const decs  = toks.slice(p+1).map(x => UNIT[x]).filter(n => n !== undefined);
+      if(whole !== null && decs.length) return parseFloat(whole + '.' + decs.join(''));
+      if(whole !== null) return whole;
+      continue;
+    }
+
+    const v = wordsToNumber(toks);
+    if(v !== null) return v;
+  }
+  return null;
+}
+
+function parseYesNo(alts){
+  for(const t of alts){
+    if(/\b(yes|yeah|yep|yup|correct|right|ok|okay|sure|affirmative)\b/.test(t)) return true;
+    if(/\b(no|nope|nah|wrong|incorrect|negative)\b/.test(t)) return false;
+  }
+  return null;
+}
+
+function parseMode(alts){
+  for(const t of alts){
+    if(/\b(prescribed|prescription|fixed|same|set)\b/.test(t))  return 'prescribed';
+    if(/\b(calculate|calculated|calculating|carb|carbs|ratio|different|irregular|changes|varies|vary)\b/.test(t))
+      return 'calculate';
+  }
+  return null;
+}
+
+function parseCommand(alts){
+  for(const t of alts){
+    if(/\b(stop|quit|exit|cancel|never mind)\b/.test(t))   return 'stop';
+    if(/\b(dose|dosing|inject|injection|shot)\b/.test(t))  return 'dose';
+    if(/\b(replace|cartridge|refill|new pen|reload)\b/.test(t)) return 'replace';
+    if(/\b(status|how much|remaining|left|check)\b/.test(t)) return 'status';
+    if(/\b(settings?|setup|ratio|configure)\b/.test(t))    return 'settings';
+    if(/\b(repeat|again|what|pardon|say that)\b/.test(t))   return 'repeat';
+  }
+  return null;
+}
+
+// ====================================================================
+//  ASK
+// ====================================================================
+
+const STOP = Symbol('stop');
+
+async function micFailed(){
+  await speak('The microphone is not responding. Press Stop, then Start again.');
+}
+
+async function askYesNo(prompt){
+  for(let i = 0; i < 3; i++){
+    await speak(i ? 'Yes or no?' : prompt, 'Say yes or no');
+    if(abortFlag || cancelFlag) return null;
+
+    const r = await hearUntil(alts => {
+      if(parseCommand(alts) === 'stop') return STOP;
+      return parseYesNo(alts);            // null keeps the window open
+    });
+    if(abortFlag || cancelFlag) return null;
+
+    if(r.reason === 'nomic'){ await micFailed(); return null; }
+    if(r.v === STOP) return null;
+    if(r.v !== null) return r.v;
+    // timed out: fall through and ask again
+  }
+  return null;
+}
+
+async function askNumber(prompt, lo, hi){
+  for(let i = 0; i < 3; i++){
+    await speak(i ? 'I did not catch that. ' + prompt : prompt, 'Say the number');
+    if(abortFlag || cancelFlag) return null;
+
+    const r = await hearUntil(alts => {
+      if(parseCommand(alts) === 'stop') return STOP;
+      return parseNumber(alts);           // null keeps the window open
+    });
+    if(abortFlag || cancelFlag) return null;
+
+    if(r.reason === 'nomic'){ await micFailed(); return null; }
+    if(r.v === STOP) return null;
+    if(r.v === null) continue;            // only after the full window
+
+    const v = Math.round(r.v);      // whole units only
+    if(v < lo || v > hi){
+      await speak(fmt(v) + ' is outside the range ' + lo + ' to ' + hi + '.');
+      continue;
+    }
+
+    // the confirmation step
+    const ok = await askYesNo(fmt(v) + '. Is that correct?');
+    if(ok === null) return null;
+    if(ok) return v;
+  }
+  return null;
+}
+
+async function askMode(){
+  for(let i = 0; i < 3; i++){
+    await speak(i ? 'Say prescribed, or say calculate.'
+                  : 'Do you use a prescribed dose, or should I calculate it? '
+                    + 'Say prescribed, or say calculate.',
+                'Say: prescribed  or  calculate');
+    if(abortFlag || cancelFlag) return null;
+
+    const r = await hearUntil(alts => {
+      if(parseCommand(alts) === 'stop') return STOP;
+      return parseMode(alts);
+    });
+    if(abortFlag || cancelFlag) return null;
+
+    if(r.reason === 'nomic'){ await micFailed(); return null; }
+    if(r.v === STOP) return null;
+    if(r.v) return r.v;
+  }
+  return null;
+}
+
+async function askCommand(){
+  for(let i = 0; i < 3; i++){
+    // The options are only spoken if the first attempt fails. Reciting
+    // the menu before every turn is the kind of talking that makes a
+    // voice interface tiring to use.
+    await speak(i ? 'Say dose, replace cartridge, status, or settings.'
+                  : 'What would you like to do?',
+                'Say: dose, replace cartridge, status, or settings');
+    if(abortFlag || cancelFlag) return 'stop';
+
+    const r = await hearUntil(alts => parseCommand(alts), 14000);
+    if(abortFlag || cancelFlag) return 'stop';
+
+    if(r.reason === 'nomic'){ await micFailed(); return 'stop'; }
+    if(r.v) return r.v;
+  }
+  return 'stop';
+}
+
+// Whole units only, per Ms. Renshaw. Half units are gone from the
+// calculation, the dial, the speech and the display.
+const fmt = v => String(Math.round(v));
+
+// ---------- numbers as words ----------
+// The dose is spoken as words the app builds itself rather than handing
+// the digits to the synthesizer and trusting it. Engines differ on how
+// they read a number aloud. For the one number that decides the
+// injection, the wording is not left to the voice engine.
+
+const ONES = ['zero','one','two','three','four','five','six','seven','eight',
+              'nine','ten','eleven','twelve','thirteen','fourteen','fifteen',
+              'sixteen','seventeen','eighteen','nineteen'];
+const TENW = ['','','twenty','thirty','forty','fifty','sixty','seventy',
+              'eighty','ninety'];
+
+function intWords(n){
+  n = Math.floor(Math.abs(n));
+  if(n < 20)  return ONES[n];
+  if(n < 100){
+    const r = n % 10;
+    return TENW[Math.floor(n/10)] + (r ? ' ' + ONES[r] : '');
+  }
+  if(n < 1000){
+    const r = n % 100;
+    return ONES[Math.floor(n/100)] + ' hundred' + (r ? ' ' + intWords(r) : '');
+  }
+  return String(n);
+}
+
+// 5 -> "five units"
+function spokenUnits(v){
+  const n = Math.round(v);
+  return intWords(n) + (n === 1 ? ' unit' : ' units');
+}
+
+// ====================================================================
+//  DIAL  (hardware abstraction: slider now, encoder later)
+// ====================================================================
+
+function readDial(){
+  if($('faultSim').checked) return { units:null, status:'fault' };
+  return { units: parseFloat($('dial').value), status:'ok' };
+}
+
+function renderDial(target){
+  const { units, status } = readDial();
+  if(status !== 'ok'){
+    $('dialVal').textContent = '--';
+    $('dialStatus').className = 'status stop';
+    $('dialStatus').textContent = 'Sensor fault. Do not inject.';
+    return;
+  }
+  $('dialVal').textContent = fmt(units);
+  const d = units - target;
+  if(Math.abs(d) < 0.01){
+    $('dialStatus').className = 'status ok';
+    $('dialStatus').textContent = 'Match';
+  }else{
+    $('dialStatus').className = 'status warn';
+    $('dialStatus').textContent = d < 0 ? fmt(-d) + ' low' : fmt(d) + ' high';
+  }
+}
+
+// Watches the dial and reports where it is.
+//
+// This was a setInterval before, and that was the bug. The callback was
+// async, so a new tick fired every 200 ms while the previous one was
+// still awaiting its announcement. Several announcements overlapped,
+// each calling speechSynthesis.cancel() on the one before it, so the
+// spoken position lagged behind the dial and was sometimes a value the
+// dial had already left. Adjusting by ear was guesswork.
+//
+// A sequential loop fixes it: read, announce, and only then read again.
+// Nothing overlaps, so what is spoken is always the current position.
+async function waitForDial(target){
+  let spoken = null;              // last position announced
+  let stable = null;              // value the dial has been resting at
+  let since  = 0;                 // when it came to rest there
+
+  while(running && !abortFlag && !cancelFlag){
+    const { units, status } = readDial();
+    renderDial(target);
+
+    if(status === 'fault'){
+      await speak('Sensor fault. I cannot read the dial. Do not inject.');
+      return false;
+    }
+
+    // Dial moved: restart the settle timer and allow a fresh announcement
+    // at the new position.
+    if(units !== stable){
+      stable = units;
+      since  = Date.now();
+      spoken = null;
+      await sleep(100);
+      continue;
+    }
+
+    // Wait for it to hold still before saying anything, so the device is
+    // not talking over a dial that is still turning.
+    if(Date.now() - since < 500 || units === spoken){
+      await sleep(100);
+      continue;
+    }
+
+    spoken = units;
+    const d = Math.round(units - target);
+
+    if(Math.abs(d) < 0.01){
+      await speak(spokenUnits(units) + '. That matches your dose.',
+                  'Match - ready to inject', 0.9);
+      return true;
+    }
+
+    // "turn up" and "turn down" are what the hand has to do. "1.5 low"
+    // makes the user work out the direction themselves.
+    await speak(spokenUnits(units) + '. Turn '
+                + (d < 0 ? 'up ' : 'down ') + spokenUnits(Math.abs(d)) + '.',
+                (d < 0 ? 'Turn up ' : 'Turn down ') + fmt(Math.abs(d)), 0.9);
+  }
+  return false;
+}
+
+// ====================================================================
+//  FLOWS
+// ====================================================================
+
+async function doseFlow(){
+  if(state.remaining <= 0){
+    await speak('Cartridge empty. Replace it first.');
+    return;
+  }
+
+  $('valsPanel').hidden = false;
+  $('vBg').textContent = '--'; $('vCarbs').textContent = '--';
+  $('doseBox').hidden = true;
+
+  let dose;
+
+  if(cfg.mode === 'prescribed'){
+    // Nothing to ask: the dose is the one the prescription set.
+    dose = Math.round(cfg.prescribed);
+    $('vBg').textContent = 'n/a';
+    $('vCarbs').textContent = 'n/a';
+  }else{
+    const bg = await askNumber('What is your blood sugar?', 20, 700);
+    if(bg === null) return cancel();
+    $('vBg').textContent = fmt(bg);
+
+    const carbs = await askNumber('How many grams of carbohydrate?', 0, 500);
+    if(carbs === null) return cancel();
+    $('vCarbs').textContent = fmt(carbs);
+
+    const carbDose = carbs / cfg.icRatio;
+    const corr     = Math.max(0, (bg - cfg.targetBG) / cfg.isf);
+    dose = Math.round(carbDose + corr);
+  }
+
+  if(dose <= 0){
+    await speak('No insulin is needed for those numbers.');
+    return cleanup();
+  }
+
+  if(dose > PEN_MAX){
+    await speak('That works out to ' + spokenUnits(dose)
+                + ', which is more than the pen can dial. '
+                + 'Check your settings or ask your provider about splitting it.', '', 0.9);
+    return cleanup();
+  }
+
+  if(dose > state.remaining){
+    await speak('This dose needs ' + spokenUnits(dose) + ', but only '
+                + spokenUnits(state.remaining)
+                + ' remain. Replace the cartridge first.', '', 0.9);
+    return cleanup();
+  }
+
+  $('doseBox').hidden = false;
+  $('doseBox').className = 'status ok';
+  $('doseBox').textContent = fmt(dose) + ' units';
+
+  // dial verification
+  $('dialPanel').hidden = false;
+  $('dial').value = 0;
+  renderDial(dose);
+  $('dial').oninput = () => renderDial(dose);
+
+  // The dose is the one number that must not be misheard, so it is said
+  // slowly, then repeated after a pause.
+  await speak('Your dose is ' + spokenUnits(dose) + '.',
+              'Dose: ' + fmt(dose) + ' units', 0.75);
+  await sleep(700);
+  await speak('Once more. ' + spokenUnits(dose) + '.', '', 0.8);
+
+  // Needle on before the dial is turned, which is the order the pen is
+  // actually used in.
+  await speak('Attach a new needle before you dial.', 'Attach a new needle', 0.9);
+  const needled = await askYesNo('Is the needle attached?');
+  if(needled === null) return cancel();
+  if(!needled){
+    await speak('Attach a needle, then start the dose again.');
+    return cleanup();
+  }
+
+  await speak('Now turn the dial.', 'Turn the dial to ' + fmt(dose), 0.9);
+
+  const matched = await waitForDial(dose);
+  if(!matched) return cancel();
+
+  const injected = await askYesNo('Have you injected the dose?');
+  if(injected === null) return cancel();
+  if(!injected){
+    await speak('No dose recorded.');
+    return cleanup();
+  }
+
+  const full = await askYesNo('Did the full dose go in?');
+  if(full === null) return cancel();
+
+  let delivered = dose;
+  if(!full){
+    const amt = await askNumber('How many units do you think went in?', 0, dose);
+    if(amt === null) return cancel();
+    delivered = amt;
+  }
+
+  state.remaining = Math.max(0, state.remaining - delivered);
+  save(); render();
+
+  let msg = spokenUnits(delivered) + ' recorded. '
+          + spokenUnits(state.remaining) + ' remaining.';
+  if(state.remaining <= 0) msg += ' The cartridge is empty.';
+  else if(state.remaining < delivered) msg += ' Not enough for another dose this size.';
+  else if(state.remaining / cfg.capacity * 100 < cfg.lowWarnPct) msg += ' Running low.';
+
+  await speak(msg, '', 0.9);
+
+  // Sharps disposal is part of the task, and it is the step a user cannot
+  // confirm by looking.
+  await speak('Remove the needle and put it in your sharps container.',
+              'Dispose of the needle', 0.9);
+  cleanup();
+}
+
+async function replaceFlow(){
+  const ok = await askYesNo('Have you installed a new cartridge?');
+  if(ok === null) return cancel();
+  if(!ok){ await speak('Cartridge not changed.'); return; }
+  state.remaining = cfg.capacity;
+  save(); render();
+  await speak('Cartridge replaced. ' + spokenUnits(cfg.capacity) + ' available.', '', 0.9);
+}
+
+const Q_RATIO  = 'One unit covers how many grams of carbohydrate?';
+const Q_CORR   = 'One unit lowers blood sugar by how much?';
+const Q_TARGET = 'What is your target blood sugar?';
+const Q_CAP    = 'How many units does the cartridge hold?';
+
+const Q_PRESC = 'How many units is your prescribed dose?';
+
+// Two ways to set the pen up. A prescribed dose is one fixed number the
+// doctor gave the user, so the pen simply repeats it. The calculated
+// route asks for the ratios and works the dose out each time.
+// Answers collect in a draft and are copied onto cfg only once every
+// question has been answered. Writing cfg.mode as soon as it was heard
+// was the switching bug: if a later question timed out, the pen was left
+// in the new mode with the old numbers and nothing saved, so it looked
+// like the change had happened and then undone itself.
+async function askSettings(){
+  const d = {};
+
+  const mode = await askMode();
+  if(mode === null) return false;
+  d.mode = mode;
+
+  if(mode === 'prescribed'){
+    const v = await askNumber(Q_PRESC, 1, PEN_MAX);
+    if(v === null) return false;
+    d.prescribed = v;
+  }else{
+    const a = await askNumber(Q_RATIO,  1, 100);  if(a === null) return false;
+    const b = await askNumber(Q_CORR,   5, 200);  if(b === null) return false;
+    const c = await askNumber(Q_TARGET, 70, 200); if(c === null) return false;
+    d.icRatio = a; d.isf = b; d.targetBG = c;
+  }
+
+  const cap = await askNumber(Q_CAP, 50, 600);
+  if(cap === null) return false;
+  d.capacity = cap;
+
+  Object.assign(cfg, d);          // commit, all or nothing
+  return true;
+}
+
+async function settingsFlow(){
+  if(cfg.mode === 'prescribed'){
+    await speak('You are set to a prescribed dose of '
+                + spokenUnits(cfg.prescribed) + '.', '', 0.9);
+  }else{
+    await speak('I am calculating your dose. One unit covers ' + fmt(cfg.icRatio)
+                + ' grams and lowers your blood sugar by ' + fmt(cfg.isf)
+                + '. Your target is ' + fmt(cfg.targetBG) + '.', '', 0.9);
+  }
+  const ch = await askYesNo('Would you like to change your settings?');
+  if(ch === null) return cancel();
+  if(!ch) return;
+
+  if(!(await askSettings())) return cancel();
+  state.configured = true;
+  save(); render();
+
+  await speak(cfg.mode === 'prescribed'
+      ? 'Saved. Prescribed dose, ' + spokenUnits(cfg.prescribed) + '.'
+      : 'Saved. I will calculate your dose from now on.', '', 0.9);
+}
+
+async function setupFlow(){
+  await speak('First time setup.');
+  if(!(await askSettings())) return false;
+
+  state.remaining = cfg.capacity;
+  state.configured = true;
+  save(); render();
+  await speak('Setup complete. ' + spokenUnits(cfg.capacity) + ' available.', '', 0.9);
+  return true;
+}
+
+function cancel(){ speak('Cancelled.'); cleanup(); }
+function cleanup(){
+  $('dialPanel').hidden = true;
+  $('valsPanel').hidden = true;
+}
+
+// ====================================================================
+//  SESSION
+// ====================================================================
+
+function statusLine(){
+  const pct = Math.round(state.remaining / cfg.capacity * 100);
+  if(state.remaining <= 0) return 'The cartridge is empty. Replace it before dosing.';
+  let s = spokenUnits(state.remaining) + ' remaining, ' + pct + ' percent.';
+  if(pct < cfg.lowWarnPct) s += ' Replace it soon.';
+  return s;
+}
+
+async function run(cmd){
+  if(busy || !running) return;
+  busy = true; cancelFlag = false; setButtons();
+  try{
+    if(cmd === 'dose')          await doseFlow();
+    else if(cmd === 'replace')  await replaceFlow();
+    else if(cmd === 'settings') await settingsFlow();
+    else if(cmd === 'status')   await speak(statusLine());
+  }finally{
+    busy = false; setButtons();
+  }
+}
+
+async function session(){
+  if(!state.configured){
+    if(!(await setupFlow())){ stopSession(); return; }
+  }else{
+    await speak('Ready. ' + statusLine());
+  }
+
+  while(running && !abortFlag){
+    const cmd = await askCommand();
+    if(!running || abortFlag) break;
+    if(cmd === 'stop') break;
+    if(cmd === 'repeat') continue;
+    await run(cmd);
+  }
+
+  if(running) await speak('Stopped.');
+  stopSession();
+}
+
+async function startSession(){
+  if(running) return;
+  if(!SR){
+    $('saying').textContent = 'Speech input needs Chrome or Edge.';
+    return;
+  }
+
+  // The one permission request, on the button press. Everything after
+  // this reuses the same grant.
+  $('saying').textContent = 'Allow the microphone to begin.';
+  if(!(await openMic())){
+    $('saying').textContent =
+      'Microphone blocked. Allow it in the address bar, then press Start.';
+    return;
+  }
+
+  load();
+  running = true; abortFlag = false;
+  $('startBtn').hidden = true;
+  $('stopBtn').hidden = false;
+  $('log').innerHTML = '';
+  render(); setButtons();
+  session();
+}
+
+function stopSession(){
+  running = false; abortFlag = true;
+  try{ speechSynthesis.cancel(); }catch{}
+  closeMic();
+  cleanup();
+  $('startBtn').hidden = false;
+  $('stopBtn').hidden = true;
+  setState('', 'Idle');
+  $('hint').textContent = '';
+  setButtons();
+}
+
+function setButtons(){
+  const on = running && !busy;
+  ['doseBtn','replaceBtn','settingsBtn'].forEach(id => $(id).disabled = !on);
+  $('cancelBtn').hidden = !(running && busy);
+}
+
+function render(){
+  const pct = Math.max(0, Math.min(100, state.remaining / cfg.capacity * 100));
+  $('remainVal').textContent = fmt(state.remaining);
+  $('remainBar').querySelector('i').style.width = pct + '%';
+  $('remainBar').className = 'bar' + (state.remaining <= 0 ? ' empty'
+                                     : pct < cfg.lowWarnPct ? ' low' : '');
+  const w = $('remainWarn');
+  if(state.remaining <= 0){
+    w.hidden = false; w.className = 'status stop';
+    w.textContent = 'Cartridge empty. Replace it.';
+  }else if(pct < cfg.lowWarnPct){
+    w.hidden = false; w.className = 'status warn';
+    w.textContent = 'Below ' + cfg.lowWarnPct + ' percent. Replace soon.';
+  }else w.hidden = true;
+}
+
+// ---- wiring ----
+$('startBtn').onclick    = startSession;
+$('stopBtn').onclick     = () => { abortFlag = true; stopSession(); };
+$('voiceSel').onchange = e => {
+  chosenVoice = voices.find(v => v.name === e.target.value) || null;
+  try{ localStorage.setItem(VKEY, e.target.value); }catch{}
+  speak('This is ' + (chosenVoice ? chosenVoice.name.replace(/^Microsoft /,'')
+                                  : 'the default voice')
+        + '. Your dose is twelve units.', '');
+};
+
+$('testVoice').onclick = () =>
+  speak('Your dose is twelve units. Turn the dial.', '', 0.85);
+
+// Three paces. The dose readout is already slowed relative to whatever
+// is set here, so this shifts everything together.
+const RATES = [[1.0,'normal'],[0.85,'slow'],[1.15,'quick']];
+let rateIdx = 0;
+$('rateBtn').onclick = () => {
+  rateIdx = (rateIdx + 1) % RATES.length;
+  baseRate = RATES[rateIdx][0];
+  $('rateBtn').textContent = 'Pace: ' + RATES[rateIdx][1];
+  speak('Your dose is twelve units.', '');
+};
+
+$('cancelBtn').onclick   = cancelFlow;
+$('doseBtn').onclick     = () => run('dose');
+$('replaceBtn').onclick  = () => run('replace');
+$('settingsBtn').onclick = () => run('settings');
+
+load(); render(); setButtons();
+
+// Diagnostics in the footer. If the prompt keeps reappearing, this says
+// why: either the origin is not secure, or the permission never got
+// stored as "granted" and the browser is still asking each time.
+const secure = location.protocol === 'https:' ||
+               ['localhost','127.0.0.1','[::1]'].includes(location.hostname);
+
+async function showPerm(){
+  let p = 'unknown';
+  try{
+    const s = await navigator.permissions.query({ name:'microphone' });
+    p = s.state;
+    s.onchange = () => showPerm();
+  }catch{}
+
+  $('foot').textContent =
+    location.origin + '  ·  ' + (secure ? 'secure origin' : 'NOT a secure origin')
+    + '  ·  microphone: ' + p
+    + (p === 'granted' ? '' : '  ·  set this site to Allow in Chrome site settings');
+}
+showPerm();
+})();
+</script>
+</html>

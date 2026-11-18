@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Encoder Test</title>
+<style>
+  :root{
+    --bg:#ffffff; --fg:#14181d; --muted:#5a646f; --line:#dbe0e6;
+    --card:#f4f6f8; --accent:#1f5fa8; --accent-fg:#ffffff;
+    --ok:#0c6b2e; --ok-bg:#e3f4e9;
+    --warn:#8a4b00; --warn-bg:#fdf0dd;
+    --stop:#a31515; --stop-bg:#fbe6e6;
+    --font-ui: system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#11151a; --fg:#eef2f6; --muted:#98a3ae; --line:#2a323b;
+      --card:#1a2026; --accent:#5aa0e8; --accent-fg:#0b1016;
+      --ok:#6fdc96; --ok-bg:#14301e;
+      --warn:#f0b35e; --warn-bg:#342411;
+      --stop:#ff8b85; --stop-bg:#391a1a;
+      color-scheme:dark;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font:17px/1.5 var(--font-ui);padding:24px 16px 48px}
+  .wrap{max-width:520px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+  h1{font-size:1.3rem;margin:0}
+  .sub{color:var(--muted);font-size:.88rem;margin:0}
+  .panel{background:var(--card);border:1px solid var(--line);
+         border-radius:16px;padding:24px}
+  .big{font-size:5rem;font-weight:800;line-height:1;text-align:center;
+       font-variant-numeric:tabular-nums;margin:0}
+  .unit{text-align:center;color:var(--muted);margin:.4rem 0 0;font-size:1rem}
+  .status{padding:14px;border-radius:12px;font-weight:700;text-align:center;
+          margin-top:16px}
+  .status.ok{background:var(--ok-bg);color:var(--ok)}
+  .status.warn{background:var(--warn-bg);color:var(--warn)}
+  .status.stop{background:var(--stop-bg);color:var(--stop)}
+  button{font:inherit;font-weight:650;padding:16px;border-radius:14px;
+         border:1px solid transparent;background:var(--accent);
+         color:var(--accent-fg);cursor:pointer;width:100%;min-height:58px}
+  button.secondary{background:transparent;color:var(--fg);border-color:var(--line)}
+  button[disabled]{opacity:.45;cursor:default}
+  label{display:flex;align-items:center;gap:10px;font-size:.95rem;
+        margin-top:14px;font-weight:500}
+  .log{font-size:.85rem;color:var(--muted);white-space:pre-wrap;
+       max-height:12rem;overflow-y:auto;line-height:1.6;
+       font-family:ui-monospace,Menlo,Consolas,monospace}
+  .foot{color:var(--muted);font-size:.8rem;text-align:center;margin:0}
+</style>
+
+<div class="wrap">
+
+  <div>
+    <h1>Encoder Test</h1>
+    <p class="sub">Reads the dial over Bluetooth and says the number out loud</p>
+  </div>
+
+  <div class="panel">
+    <p class="big" id="val">--</p>
+    <p class="unit">units</p>
+    <div class="status warn" id="state">Not connected</div>
+  </div>
+
+  <button id="connectBtn">Connect to pen</button>
+  <button id="disconnectBtn" class="secondary" hidden>Disconnect</button>
+
+  <div class="panel">
+    <label><input type="checkbox" id="speakChk" checked> Speak the number when it changes</label>
+    <label><input type="checkbox" id="everyChk"> Speak every reading, not just changes</label>
+    <button id="testVoice" class="secondary" style="margin-top:14px">Test the voice</button>
+  </div>
+
+  <div class="panel">
+    <div class="log" id="log"></div>
+  </div>
+
+  <p class="foot" id="foot"></p>
+</div>
+
+<script>
+(() => {
+"use strict";
+
+// ====================================================================
+//  Encoder BLE test
+//
+//  One job: prove the Nano can send a dial reading over Bluetooth and
+//  that this page can receive it and say it. Nothing else. The dose
+//  logic, the cartridge tracking and the conversation all live in the
+//  main app; this is only the link.
+//
+//  Ethan Hebert | Carilion Giles: Insulin Dosing
+// ====================================================================
+
+const $ = id => document.getElementById(id);
+
+// Must match encodertest.ino exactly, and in lower case.
+const SERVICE_UUID = '19b10000-e8f2-537e-4f6c-d104768a1214';
+const DOSE_UUID    = '19b10001-e8f2-537e-4f6c-d104768a1214';
+
+let device = null;
+let characteristic = null;
+
+// ---------- logging ----------
+const t0 = Date.now();
+function log(msg){
+  const line = document.createElement('div');
+  line.textContent = '[' + ((Date.now() - t0)/1000).toFixed(1).padStart(6) + 's] ' + msg;
+  $('log').prepend(line);
+}
+
+// ---------- speech ----------
+// The number is spoken as words the page builds itself rather than
+// handing digits to the synthesizer, for the same reason as the main
+// app: engines disagree about how to read a number aloud.
+const ONES = ['zero','one','two','three','four','five','six','seven','eight',
+              'nine','ten','eleven','twelve','thirteen','fourteen','fifteen',
+              'sixteen','seventeen','eighteen','nineteen'];
+const TENW = ['','','twenty','thirty','forty','fifty','sixty','seventy',
+              'eighty','ninety'];
+
+function intWords(n){
+  n = Math.floor(Math.abs(n));
+  if(n < 20) return ONES[n];
+  if(n < 100){
+    const r = n % 10;
+    return TENW[Math.floor(n/10)] + (r ? ' ' + ONES[r] : '');
+  }
+  return String(n);
+}
+
+function say(text){
+  if(!('speechSynthesis' in window)) return;
+  try{
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.rate = 0.95;
+    speechSynthesis.speak(u);
+  }catch{}
+}
+
+// ---------- display ----------
+function show(units, status){
+  if(status === 'ok'){
+    $('val').textContent = units;
+    $('state').className = 'status ok';
+    $('state').textContent = 'Connected - reading the dial';
+  }else if(status === 'fault'){
+    $('val').textContent = '--';
+    $('state').className = 'status stop';
+    $('state').textContent = 'Sensor fault - do not trust a number';
+  }
+}
+
+// ---------- incoming data ----------
+let lastSpoken = null;
+let settleTimer = null;
+
+function onValue(event){
+  const raw = new TextDecoder().decode(event.target.value).trim();
+  log('received "' + raw + '"');
+
+  const [valStr, statusRaw] = raw.split(',');
+  const status = (statusRaw || '').trim();
+
+  if(status === 'ok'){
+    const units = parseInt(valStr, 10);
+    if(!Number.isFinite(units)){
+      log('could not parse a number from that line');
+      return;
+    }
+    show(units, 'ok');
+
+    if(!$('speakChk').checked) return;
+
+    if($('everyChk').checked){
+      say(intWords(units));
+      return;
+    }
+
+    // Wait for the dial to stop moving before announcing, so the page
+    // does not read out every position on the way past.
+    clearTimeout(settleTimer);
+    settleTimer = setTimeout(() => {
+      if(units !== lastSpoken){
+        lastSpoken = units;
+        say(intWords(units) + (units === 1 ? ' unit' : ' units'));
+      }
+    }, 400);
+
+  }else{
+    show(null, 'fault');
+    clearTimeout(settleTimer);
+    if($('speakChk').checked) say('Sensor fault. Do not inject.');
+    lastSpoken = null;
+  }
+}
+
+// ---------- connection ----------
+async function connect(){
+  if(!navigator.bluetooth){
+    $('state').className = 'status stop';
+    $('state').textContent = 'This browser has no Web Bluetooth. Use Chrome or Edge on a computer.';
+    log('navigator.bluetooth is missing');
+    return;
+  }
+
+  try{
+    log('opening the device chooser');
+    $('state').className = 'status warn';
+    $('state').textContent = 'Choose "DosePen" in the dialog';
+
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{ services: [SERVICE_UUID] }]
+    });
+
+    log('chose "' + (device.name || 'unnamed') + '"');
+    device.addEventListener('gattserverdisconnected', onDisconnected);
+
+    log('connecting');
+    const server  = await device.gatt.connect();
+    const service = await server.getPrimaryService(SERVICE_UUID);
+    characteristic = await service.getCharacteristic(DOSE_UUID);
+
+    await characteristic.startNotifications();
+    characteristic.addEventListener('characteristicvaluechanged', onValue);
+
+    log('connected and listening');
+    $('state').className = 'status ok';
+    $('state').textContent = 'Connected - turn the dial';
+    $('connectBtn').hidden = true;
+    $('disconnectBtn').hidden = false;
+    say('Connected');
+
+  }catch(err){
+    log('failed: ' + err.message);
+    $('state').className = 'status stop';
+    $('state').textContent = 'Could not connect: ' + err.message;
+  }
+}
+
+function onDisconnected(){
+  log('the pen disconnected');
+  characteristic = null;
+  $('val').textContent = '--';
+  $('state').className = 'status warn';
+  $('state').textContent = 'Not connected';
+  $('connectBtn').hidden = false;
+  $('disconnectBtn').hidden = true;
+  lastSpoken = null;
+}
+
+function disconnect(){
+  if(device && device.gatt.connected) device.gatt.disconnect();
+  else onDisconnected();
+}
+
+// ---------- wiring ----------
+$('connectBtn').onclick    = connect;
+$('disconnectBtn').onclick = disconnect;
+$('testVoice').onclick     = () => say('Twelve units');
+
+// Web Bluetooth needs a secure origin, the same rule as the microphone.
+const secure = location.protocol === 'https:' ||
+               ['localhost','127.0.0.1','[::1]'].includes(location.hostname);
+$('foot').textContent = location.origin + '  -  ' +
+  (secure ? 'secure origin, Bluetooth allowed'
+          : 'NOT a secure origin: serve this from localhost or Bluetooth will not work');
+
+log('ready');
+})();
+</script>
+</html>
