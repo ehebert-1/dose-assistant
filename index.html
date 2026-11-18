@@ -1,8 +1,17 @@
 <!doctype html>
 <html lang="en">
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Dose Assistant</title>
+
+<!-- Installable app: manifest, icons and the colour of the phone's
+     status bar while the app is open. -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1f5fa8">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Dose">
 <style>
   :root{
     --bg:#ffffff; --fg:#14181d; --muted:#5a646f; --line:#dbe0e6;
@@ -142,6 +151,7 @@
       <button id="replaceBtn" class="secondary" disabled>Replace cartridge</button>
       <button id="settingsBtn" class="secondary" disabled>Settings</button>
     </div>
+    <button id="installBtn" class="secondary" hidden>Install this app</button>
     <button id="cancelBtn" class="secondary" hidden>Cancel this step</button>
     <button id="stopBtn" class="secondary" hidden>Stop</button>
   </div>
@@ -307,11 +317,12 @@ function initRec(){
                    .filter(Boolean);
     if(!alts.length) return;
 
-    if(isEcho(alts[0])){
-      dbg('echo ignored: "' + alts[0] + '"');
-      return;                     // keep listening; do not answer
-    }
-
+    // The echo check is NOT applied here any more. Chrome sometimes
+    // transcribes the app's own sentence and the user's reply as one
+    // line - "is that correct yes" - and that line looks like an echo
+    // while actually containing the answer. Throwing it away was losing
+    // real answers. The question's own parser now gets first refusal,
+    // and only a transcript it cannot use is tested for being an echo.
     log('You', alts[0]);
     deliver(alts);
   };
@@ -560,12 +571,15 @@ function hearUntil(parse, timeoutMs = LISTEN_MS){
 
     waiter = alts => {
       if(!alts) return;                       // session hiccup; onend restarts
+
+      // Parser first. A transcript holding a usable answer is accepted
+      // even if it also carries the tail of the app's own voice.
       const v = parse(alts);
-      if(v === null || v === undefined){
-        dbg('could not use: "' + alts[0] + '" - still listening');
-        return;
-      }
-      finish(v, 'ok');
+      if(v !== null && v !== undefined){ finish(v, 'ok'); return; }
+
+      dbg(isEcho(alts[0])
+            ? 'own voice, ignored: "' + alts[0] + '"'
+            : 'could not use: "' + alts[0] + '" - still listening');
     };
 
     // A beat before opening the microphone, so the tail of the app's own
@@ -647,31 +661,39 @@ function parseNumber(alts){
   return null;
 }
 
+// Chrome returns a surprising range of spellings for a plain yes or no,
+// and short words spoken on their own are the hardest thing it does.
+// Every variant listed here has shown up in testing or is a documented
+// mis-transcription.
 function parseYesNo(alts){
   for(const t of alts){
-    if(/\b(yes|yeah|yep|yup|correct|right|ok|okay|sure|affirmative)\b/.test(t)) return true;
-    if(/\b(no|nope|nah|wrong|incorrect|negative)\b/.test(t)) return false;
+    if(/\b(yes|yeah|yea|yep|yup|ya|yah|correct|right|ok|okay|sure|affirmative|confirm|confirmed|go ahead|do it|uh huh)\b/.test(t)) return true;
+    if(/\b(no|nope|nah|not|wrong|incorrect|negative|cancel that|never|don't|dont)\b/.test(t)) return false;
   }
   return null;
 }
 
 function parseMode(alts){
   for(const t of alts){
-    if(/\b(prescribed|prescription|fixed|same|set)\b/.test(t))  return 'prescribed';
+    if(/\b(prescribed|prescribe|prescription|subscribed|fixed|same|set dose)\b/.test(t)) return 'prescribed';
     if(/\b(calculate|calculated|calculating|carb|carbs|ratio|different|irregular|changes|varies|vary)\b/.test(t))
       return 'calculate';
   }
   return null;
 }
 
+// "Dose" is one syllable with no surrounding context, which is the worst
+// case for speech recognition. Chrome commonly hears does, doze, those or
+// toes instead. Accepting those spellings costs nothing, because the only
+// command that acts outside the menu is "stop".
 function parseCommand(alts){
   for(const t of alts){
-    if(/\b(stop|quit|exit|cancel|never mind)\b/.test(t))   return 'stop';
-    if(/\b(dose|dosing|inject|injection|shot)\b/.test(t))  return 'dose';
-    if(/\b(replace|cartridge|refill|new pen|reload)\b/.test(t)) return 'replace';
-    if(/\b(status|how much|remaining|left|check)\b/.test(t)) return 'status';
-    if(/\b(settings?|setup|ratio|configure)\b/.test(t))    return 'settings';
-    if(/\b(repeat|again|what|pardon|say that)\b/.test(t))   return 'repeat';
+    if(/\b(stop|quit|exit|cancel|nevermind|never mind|go back)\b/.test(t)) return 'stop';
+    if(/\b(dose|does|doze|dos|those|toes|dosage|dosing|inject|injection|shot)\b/.test(t)) return 'dose';
+    if(/\b(replace|replaced|cartridge|cartridges|refill|new pen|reload|change cartridge)\b/.test(t)) return 'replace';
+    if(/\b(status|how much|remaining|remain|left|check)\b/.test(t)) return 'status';
+    if(/\b(settings?|setting|set up|setup|preferences|ratio|configure)\b/.test(t)) return 'settings';
+    if(/\b(repeat|again|pardon|say that|come again)\b/.test(t))  return 'repeat';
   }
   return null;
 }
@@ -755,6 +777,12 @@ async function askMode(){
   return null;
 }
 
+// Only abortFlag ends the menu. cancelFlag means "abandon the step in
+// progress", and the menu question is not a step: testing it here meant
+// that cancelling anything once made the NEXT menu turn return 'stop'
+// and end the session the moment the user asked for something.
+let menuOpen = false;        // true only while the menu is listening
+
 async function askCommand(){
   for(let i = 0; i < 3; i++){
     // The options are only spoken if the first attempt fails. Reciting
@@ -763,10 +791,12 @@ async function askCommand(){
     await speak(i ? 'Say dose, replace cartridge, status, or settings.'
                   : 'What would you like to do?',
                 'Say: dose, replace cartridge, status, or settings');
-    if(abortFlag || cancelFlag) return 'stop';
+    if(abortFlag) return 'stop';
 
+    menuOpen = true;
     const r = await hearUntil(alts => parseCommand(alts), 14000);
-    if(abortFlag || cancelFlag) return 'stop';
+    menuOpen = false;
+    if(abortFlag) return 'stop';
 
     if(r.reason === 'nomic'){ await micFailed(); return 'stop'; }
     if(r.v) return r.v;
@@ -1141,6 +1171,7 @@ async function session(){
   }
 
   while(running && !abortFlag){
+    cancelFlag = false;          // a cancelled step is finished with
     const cmd = await askCommand();
     if(!running || abortFlag) break;
     if(cmd === 'stop') break;
@@ -1236,10 +1267,19 @@ $('rateBtn').onclick = () => {
   speak('Your dose is twelve units.', '');
 };
 
+// A button press answers the menu's own question when the menu is
+// listening, instead of starting a second flow alongside it. Pressing
+// Dose while the app was waiting for a spoken command used to run the
+// dose flow and leave the menu still listening behind it.
+function chooseCommand(cmd){
+  if(menuOpen && activeFinish){ activeFinish(cmd, 'ok'); return; }
+  run(cmd);
+}
+
 $('cancelBtn').onclick   = cancelFlow;
-$('doseBtn').onclick     = () => run('dose');
-$('replaceBtn').onclick  = () => run('replace');
-$('settingsBtn').onclick = () => run('settings');
+$('doseBtn').onclick     = () => chooseCommand('dose');
+$('replaceBtn').onclick  = () => chooseCommand('replace');
+$('settingsBtn').onclick = () => chooseCommand('settings');
 
 load(); render(); setButtons();
 
@@ -1263,6 +1303,54 @@ async function showPerm(){
     + (p === 'granted' ? '' : '  ·  set this site to Allow in Chrome site settings');
 }
 showPerm();
+})();
+</script>
+
+<script>
+// ====================================================================
+//  INSTALLABILITY
+//
+//  Registering the service worker is what lets the browser offer to
+//  install this page to the home screen, and what lets it open with no
+//  connection. It is kept separate from the app's own code so that a
+//  failure here can never stop the app from running.
+// ====================================================================
+(() => {
+"use strict";
+
+if('serviceWorker' in navigator){
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js')
+      .then(() => console.log('service worker registered'))
+      .catch(err => console.log('service worker failed:', err.message));
+  });
+}
+
+// Chrome fires this when the page qualifies for installation. Holding
+// on to the event lets us put the prompt behind our own button, which
+// is more discoverable than the browser's own banner.
+let installEvent = null;
+const btn = document.getElementById('installBtn');
+
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  installEvent = e;
+  if(btn) btn.hidden = false;
+});
+
+if(btn){
+  btn.onclick = async () => {
+    if(!installEvent) return;
+    installEvent.prompt();
+    await installEvent.userChoice;
+    installEvent = null;
+    btn.hidden = true;
+  };
+}
+
+window.addEventListener('appinstalled', () => {
+  if(btn) btn.hidden = true;
+});
 })();
 </script>
 </html>
